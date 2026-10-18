@@ -1,0 +1,3 @@
+# The triage agent reads this file to name an owner for each affected path.
+demo-app/ @thediff-news
+agent/    @thediff-news

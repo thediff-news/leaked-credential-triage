@@ -1,0 +1,63 @@
+name: credential-triage
+
+on:
+  workflow_dispatch:
+    inputs:
+      key_hint:
+        description: "Substring of the leaked credential or its variable name"
+        required: true
+      issue_number:
+        description: "Alert issue to comment on (optional)"
+        required: false
+  issues:
+    types: [opened, labeled]
+
+jobs:
+  triage:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || contains(github.event.issue.labels.*.name, 'secret-alert')
+      || startsWith(github.event.issue.title, '[secret-alert]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve alert inputs
+        id: alert
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            hint=$(printf '%s' "$ISSUE_BODY" | grep -i '^key_hint:' | head -1 | cut -d: -f2- | tr -d ' \r')
+            echo "key_hint=$hint" >> "$GITHUB_OUTPUT"
+            echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+          else
+            echo "key_hint=${{ inputs.key_hint }}" >> "$GITHUB_OUTPUT"
+            echo "issue_number=${{ inputs.issue_number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure git identity
+        run: |
+          git config user.name "credential-triage-bot"
+          git config user.email "credential-triage-bot@users.noreply.github.com"
+
+      - name: Run triage agent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEY_HINT: ${{ steps.alert.outputs.key_hint }}
+          ISSUE_NUMBER: ${{ steps.alert.outputs.issue_number }}
+        run: python3 agent/triage.py --key-hint "$KEY_HINT" ${ISSUE_NUMBER:+--issue-number "$ISSUE_NUMBER"}
+
+      - name: Upload triage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triage-report
+          path: triage-report.md
